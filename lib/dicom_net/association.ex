@@ -158,14 +158,38 @@ defmodule DicomNet.Association do
     # TODO this is not always c-store
 
     ds = Dicom.BinaryFormat.from_binary(data, ts_options)
-    msg = {:dicom, %{operation: :cstore, dataset: ds}}
-    send(event_listener, msg)
-    response_ds = handle_cstore(command, ds)
+    commandField = DataSet.fetch!(command, :CommandField)
+    IO.puts(commandField.values)
 
-    response =
-      Dicom.BinaryFormat.serialize_command_data_set(response_ds)
-      |> Pdu.new_data_pdu(presentation_context_id)
-      |> Pdu.serialize()
+    response = case commandField.values do
+        [0x01] -> IO.inspect("C-Store")
+            msg = {:dicom, %{operation: :cfind, dataset: ds}}
+            send(event_listener, msg)
+            response_ds = handle_cstore(command, ds)
+            Dicom.BinaryFormat.serialize_command_data_set(response_ds)
+              |> Pdu.new_data_pdu(presentation_context_id)
+              |> Pdu.serialize()
+
+        [0x20] -> IO.inspect("C-Find")
+            msg = {:dicom, %{operation: :cfind, dataset: ds}}
+            #send(event_listener, msg)
+            response_ds = handle_cfind(command, ds, :pending)
+            # The response is a list of datasets that should? be concatenated into
+            # the response buffer 
+            {responses, final_buffer} = Enum.map_reduce(response_ds, "", fn res, acc ->
+              resp = Dicom.BinaryFormat.serialize_command_data_set(res)
+              {resp, acc <> resp}
+            end)
+
+            # serialize the final_buffer
+            final_buffer
+                |> Pdu.new_data_pdu(presentation_context_id)
+                |> Pdu.serialize()
+
+        _ -> IO.inspect("command field not determied")
+            msg = {:dicom, %{operation: :cstore, dataset: ds}}
+            send(event_listener, msg)
+      end
 
     new_state = %{state | state: :association_established, buffer: <<>>, received_data: <<>>}
 
@@ -198,5 +222,53 @@ defmodule DicomNet.Association do
       )
 
     response_ds
+  end
+
+  defp handle_cfind(command, data_set, :pending) do
+    IO.inspect(data_set)
+    qr_level = DataSet.fetch!(data_set, :QueryRetrieveLevel)
+    asci_de = DataSet.fetch!(command, :AffectedSOPClassUID)
+    mid_de = DataSet.fetch!(command, :MessageID)
+
+    response_head =
+      Dicom.DataSet.from_keyword_list(
+        AffectedSOPClassUID: DataElement.value(asci_de),
+        CommandField: 0x8020,
+        MessageIDBeingRespondedTo: DataElement.value(mid_de),
+        QueryRetrieveLevel: DataElement.value(qr_level),
+        CommandDataSetType: 0x0000, # This field shall be set to the value of 0101H (Null) if no Data Set is present; any other value indicates a Data Set is included in the Message.
+        Status: 0xff00,  # 0x0000 Success, 0xff00 Pending
+      )
+
+    response_rsp1 =
+      Dicom.DataSet.from_keyword_list(
+        CommandDataSetType: 0x0000, # This field shall be set to the value of 0101H (Null) if no Data Set is present; any other value indicates a Data Set is included in the Message.
+        Status: 0xff00,  # 0x0000 Success, 0xff00 Pending
+        AccessionNumber: "123",
+      )
+
+    response_rsp2 =
+      Dicom.DataSet.from_keyword_list(
+        CommandDataSetType: 0x0000, # This field shall be set to the value of 0101H (Null) if no Data Set is present; any other value indicates a Data Set is included in the Message.
+        Status: 0xff00,  # 0x0000 Success, 0xff00 Pending
+        AccessionNumber: "AAA",
+      )
+
+    response_tail =
+      Dicom.DataSet.from_keyword_list(
+        CommandDataSetType: 0x0101, # This field shall be set to the value of 0101H (Null) if no Data Set is present; any other value indicates a Data Set is included in the Message.
+        Status: 0x0000  # 0xff0 Success, 0xff00 Pending
+      )
+
+    # Return a list of the datasets in revese order
+    [response_tail, response_rsp1, response_rsp2, response_head]
+  end
+
+  defp build_cfind_identifier() do
+    identifier = Dicom.DataSet.from_keyword_list(
+        AccessionNumber: "hello"
+      )
+
+    identifier
   end
 end
