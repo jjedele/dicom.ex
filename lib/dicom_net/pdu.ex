@@ -9,6 +9,7 @@ defmodule DicomNet.Pdu do
   @pdu_types %{
     1 => :associate_request,
     2 => :associate_accept,
+    3 => :association_reject_response,
     4 => :data,
     5 => :association_release_request,
     6 => :association_release_response
@@ -258,6 +259,47 @@ defmodule DicomNet.Pdu do
     data
   end
 
+  def serialize(%Pdu{type: :association_reject_response, data: data}) do
+    # https://dicom.nema.org/dicom/2013/output/chtml/part08/sect_9.3.html#table_9-21
+    %{
+      source: source,
+      reason: reason
+    } = data
+
+    header = <<3::8, 0::8, 4::32, 0::8, 1::8>>
+    case source do
+      :dicom_ul_service_user ->
+        case reason do
+          :no_reason_given ->
+            header <> <<1::8, 1::8>>
+          :application_context_name_not_supported ->
+            header <> <<1::8, 2::8>>
+          :calling_ae_title_not_recognized ->
+            header <> <<1::8, 3::8>>
+          :called_ae_title_not_recognized ->
+            header <> <<1::8, 7::8>>
+        end
+
+      :dicom_ul_service_provider_acse ->
+        case reason do
+          :no_reason_given ->
+            header <> <<1::8, 1::8>>
+          :protocol_version_not_supported ->
+            header <> <<1::8, 2::8>>
+        end
+
+      :dicom_ul_service_provider_presentation ->
+        case reason do
+          :no_reason_given ->
+            header <> <<1::8, 1::8>>
+          :protocol_version_not_supported ->
+            header <> <<1::8, 2::8>>
+        end
+    end
+   
+   
+  end
+
   def new_associate_accept_response_pdu(association_data) do
     %Pdu{
       type: :associate_accept_response,
@@ -290,6 +332,16 @@ defmodule DicomNet.Pdu do
       type: :association_release_response,
       length: 0,
       data: nil
+    }
+  end
+
+  def new_association_reject_response_pdu(source, reason) do
+    %Pdu{
+      type: :association_reject_response,
+      data: %{
+        source: source,
+        reason: reason
+      }
     }
   end
 end
