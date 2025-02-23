@@ -26,6 +26,8 @@ defmodule DicomNet.Association do
   @no_dataset_present 0x0101
   @unable_to_process 0xC001
 
+  @verification_sopclassuid "1.2.840.10008.1.1"
+
   def start(init_args) do
     GenServer.start(__MODULE__, init_args)
   end
@@ -76,27 +78,19 @@ defmodule DicomNet.Association do
     end
   end
 
-  defp accept_associate_request(
-         %{presentation_contexts: presentation_contexts} = associate_request
+  defp validate_associate_request(
+         %{presentation_contexts: presentation_contexts} = associate_request,
+         result
        ) do
     accepted_presentation_contexts =
       presentation_contexts
-      |> Enum.map(fn {id, pc} -> {id, Map.put(pc, :result, :accept)} end)
+      |> Enum.map(fn {id, pc} -> {id, Map.put(pc, :result, result)} end)
       |> Enum.into(%{})
 
     %{associate_request | presentation_contexts: accepted_presentation_contexts}
   end
 
-  defp handle_pdu(
-         %Pdu{
-           type: :associate_request,
-           data: associate_request
-         },
-         %{socket: _socket, state: :waiting_for_association} = state
-       ) do
-    Logger.info("Accepting association")
-    association_data = accept_associate_request(associate_request)
-
+  defp accept_association(state, association_data) do
     new_state =
       state
       |> Map.put(:state, :association_established)
@@ -107,6 +101,100 @@ defmodule DicomNet.Association do
       |> Pdu.serialize()
 
     {new_state, response}
+  end
+
+  defp reject_association(state, association_data, source, reason) do
+    new_state =
+      state
+      |> Map.put(:state, :association_release_request)
+      |> Map.put(:association, association_data)
+
+    response =
+      Pdu.new_association_reject_response_pdu(source, reason)
+      |> Pdu.serialize()
+
+    {new_state, response}
+  end
+
+  defp handle_pdu(
+         %Pdu{
+           type: :associate_request,
+           data: associate_request
+         },
+         %{socket: _socket, state: :waiting_for_association} = state
+       ) do
+    # If the :association handler is defined 
+    # the acceptance/rejection can be handled by
+    # the host application.
+    {new_state, response} =
+      case Keyword.fetch(state.handlers, :association_validator) do
+        :error ->
+          # If no handler is defined simply allow association.
+          Logger.debug("No association handler is defined. Accept association.")
+          association_data = validate_associate_request(associate_request, :accept)
+          accept_association(state, association_data)
+
+        {:ok, association_handler} ->
+          # If a handler is defined it must return
+          # :accept or :reject
+          Logger.debug("Association handler is defined. Let's pass association_data to it.")
+
+          case association_handler.(associate_request) do
+            :accept ->
+              Logger.debug("Association accepted by handler.")
+              association_data = validate_associate_request(associate_request, :accept)
+              accept_association(state, association_data)
+
+            {:reject, source, reason} ->
+              Logger.debug("Association rejected by handler.")
+              association_data = validate_associate_request(associate_request, :reject)
+              reject_association(state, association_data, source, reason)
+          end
+      end
+
+    {new_state, response}
+  end
+
+  defp handle_pdu(
+         %Pdu{
+           type: :data,
+           data: %{
+             pdv_flags: :command_last_fragment,
+             data:
+               <<
+                 0x00, 0x00, # Group 0 
+                 0x00, 0x00, # Element 0   
+                 0x04, 0x00, 0x00, 0x00, # Data Length 4
+                 _val::binary-size(4),
+                 0x00, 0x00, # Group 0
+                 0x02, 0x00, # Element 2
+                 0x12, 0x00, 0x00, 0x00, # Data Length 18 (0x12 hex)
+                 @verification_sopclassuid,
+                 res::binary
+               >> = data
+           }
+         },
+         %{state: :association_established} = state
+       ) do
+    Logger.debug("Handling C-ECHO-RQ")
+    command = Dicom.BinaryFormat.from_binary(data, endianness: :little, explicit: false)
+    mid_de = DataSet.value_for!(command, :MessageID)
+    # Handle C-ECHO
+    response_ds =
+      Dicom.DataSet.from_keyword_list(
+        AffectedSOPClassUID: @verification_sopclassuid,
+        CommandField: 0x8030,
+        MessageIDBeingRespondedTo: mid_de,
+        CommandDataSetType: @no_dataset_present,
+        Status: 0
+      )
+
+    response =
+      Dicom.BinaryFormat.serialize_command_data_set(response_ds)
+      |> Pdu.new_data_pdu(1, type: :command_last_fragment)
+      |> Pdu.serialize()
+
+    {state, response}
   end
 
   defp handle_pdu(
@@ -165,7 +253,6 @@ defmodule DicomNet.Association do
     %{uid: ts_uid} = syntaxes |> Enum.find(fn el -> Map.get(el, :syntax_type) == :transfer end)
     %{name: _ts_name, options: ts_options} = Dicom.UidRegistry.get_transfer_syntax(ts_uid)
 
-    # TODO this is not always c-store
     ds = Dicom.BinaryFormat.from_binary(data, ts_options)
     command_code = DataSet.value_for!(command, :CommandField)
 
@@ -211,7 +298,7 @@ defmodule DicomNet.Association do
               |> Pdu.serialize()
 
             {:ok, cfind_handler} ->
-              Logger.debug("Function getresponses is defined, returning responses to the caller.")
+              Logger.debug("CFind handler is defined, returning responses to the caller.")
               msg = {:dicom, %{operation: :cfind, dataset: ds}}
 
               response_ds =
