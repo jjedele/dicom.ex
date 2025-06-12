@@ -31,6 +31,18 @@ defmodule DicomNet.Pdu do
     0x03 => :command_last_fragment
   }
 
+  defp serialize_presentation_context_request({pc_id, %{syntaxes: syntaxes}}) do
+    items =
+      Enum.map(syntaxes, fn %{syntax_type: type, uid: uid} ->
+        tag = if type == :abstract, do: 0x30, else: 0x40
+        <<tag::8, 0::8, byte_size(uid)::16, uid::binary>>
+      end)
+      |> Enum.into(<<>>)
+
+    data = <<pc_id::8, 0::8, 0::16, items::binary>>
+    <<0x20::8, 0::8, byte_size(data)::16, data::binary>>
+  end
+
   defp parse_syntax_field(data) do
     case data do
       <<0x30::8, _r::8, length::16, abstract_syntax_uid::binary-size(length), rest::binary>> ->
@@ -69,6 +81,28 @@ defmodule DicomNet.Pdu do
           %{
             :item_type => :presentation_context,
             :id => presentation_context_id,
+            :syntaxes => Stream.unfold(sub_items, &parse_syntax_field/1) |> Enum.to_list()
+          },
+          rest
+        }
+
+      <<0x21::8, _r::8, length::16, presentation_context_id::8, _r2::8, result::8,
+        _r3::8, sub_items::binary-size(length - 4), rest::binary>> ->
+        result =
+          case result do
+            0 -> :accept
+            1 -> :user_rejection
+            2 -> :no_reason
+            3 -> :abstract_syntax_not_supported
+            4 -> :transfer_syntaxes_not_supported
+            _ -> result
+          end
+
+        {
+          %{
+            :item_type => :presentation_context,
+            :id => presentation_context_id,
+            :result => result,
             :syntaxes => Stream.unfold(sub_items, &parse_syntax_field/1) |> Enum.to_list()
           },
           rest
@@ -163,8 +197,11 @@ defmodule DicomNet.Pdu do
     pdu_data =
       case type do
         :associate_request -> parse_associate_request(rest)
+        :associate_accept -> parse_associate_request(rest)
+        :association_reject_response -> nil
         :data -> parse_data_pdu(rest)
         :association_release_request -> nil
+        :association_release_response -> nil
       end
 
     %Pdu{
@@ -221,6 +258,41 @@ defmodule DicomNet.Pdu do
 
   def serialize(%Pdu{type: :association_release_response}) do
     <<6::8, 0::8, 4::32, 0::32>>
+  end
+
+  def serialize(%Pdu{type: :association_release_request}) do
+    <<5::8, 0::8, 4::32, 0::32>>
+  end
+
+  def serialize(%Pdu{type: :associate_request, data: assoc_data}) do
+    %{
+      protocol_version: protocol_version,
+      calling_ae_title: calling_ae_title,
+      called_ae_title: called_ae_title,
+      application_context: application_context,
+      presentation_contexts: presentation_contexts,
+      user_information: user_information
+    } = assoc_data
+
+    calling_ae_title = String.pad_trailing(calling_ae_title, 16, " ")
+    called_ae_title = String.pad_trailing(called_ae_title, 16, " ")
+
+    ac_data = serialize_application_context(application_context)
+
+    pc_data =
+      Enum.reduce(presentation_contexts, <<>>, fn pc, acc ->
+        acc <> serialize_presentation_context_request(pc)
+      end)
+
+    uc_data = serialize_user_information(user_information)
+
+    data =
+      <<protocol_version::16, 0::16, called_ae_title::binary, calling_ae_title::binary, 0::256,
+        ac_data::binary, pc_data::binary, uc_data::binary>>
+
+    length = byte_size(data)
+
+    <<1::8, 0::8, length::32, data::binary>>
   end
 
   def serialize(%Pdu{type: :associate_accept_response, data: assoc_data}) do
@@ -338,6 +410,18 @@ defmodule DicomNet.Pdu do
       length: 0,
       data: nil
     }
+  end
+
+  def new_association_release_request_pdu() do
+    %Pdu{
+      type: :association_release_request,
+      length: 0,
+      data: nil
+    }
+  end
+
+  def new_associate_request_pdu(assoc_data) do
+    %Pdu{type: :associate_request, length: 0, data: assoc_data}
   end
 
   def new_association_reject_response_pdu(source, reason) do
