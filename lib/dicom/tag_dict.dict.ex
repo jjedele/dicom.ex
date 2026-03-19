@@ -1,6 +1,4 @@
 defmodule Dicom.TagDict.Dict do
-  @version "2024d"
-
   @by_tag %{
     0x0000 => %{
       0x0000 => %{
@@ -11044,40 +11042,20 @@ defmodule Dicom.TagDict.Dict do
         name: "Transform Label",
         vr: :LO
       },
-      0x0400 => %{
-        keyword: :RowsForNthOrderCoefficients,
-        name: "Rows For Nth Order Coefficients",
-        vr: :US
-      },
       0x0401 => %{
         keyword: :TransformVersionNumber,
         name: "Transform Version Number",
         vr: :LO
-      },
-      0x0401 => %{
-        keyword: :ColumnsForNthOrderCoefficients,
-        name: "Columns For Nth Order Coefficients",
-        vr: :US
       },
       0x0402 => %{
         keyword: :NumberOfTransformSteps,
         name: "Number of Transform Steps",
         vr: :US
       },
-      0x0402 => %{
-        keyword: :CoefficientCoding,
-        name: "Coefficient Coding",
-        vr: :LO
-      },
       0x0403 => %{
         keyword: :SequenceOfCompressedData,
         name: "Sequence of Compressed Data",
         vr: :LO
-      },
-      0x0403 => %{
-        keyword: :CoefficientCodingPointers,
-        name: "Coefficient Coding Pointers",
-        vr: :AT
       },
       0x0404 => %{
         keyword: :DetailsOfCoefficients,

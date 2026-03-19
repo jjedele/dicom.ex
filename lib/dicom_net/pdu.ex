@@ -104,7 +104,7 @@ defmodule DicomNet.Pdu do
       Map.fetch!(items, :user_information)
       |> Enum.at(0)
       |> Map.fetch!(:items)
-      |> Enum.map(fn %{:type => type, :name => name, :data => data} = item ->
+      |> Enum.map(fn %{:type => type, :name => name} = item ->
         {name || type, item}
       end)
       |> Enum.into(%{})
@@ -279,7 +279,6 @@ defmodule DicomNet.Pdu do
 
           :calling_ae_title_not_recognized ->
             header <> <<1::8, 3::8>>
-
 
           :called_ae_title_not_recognized ->
             header <> <<1::8, 7::8>>

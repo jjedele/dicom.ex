@@ -17,7 +17,6 @@ defmodule Dicom.BinaryFormat do
   """
   require Integer
   require Logger
-  alias ElixirLS.LanguageServer.Providers.Completion.Reducers.Returns
   alias Dicom.BinaryFormat
   alias Dicom.UidRegistry
   alias Dicom.DataSet

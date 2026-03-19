@@ -43,7 +43,7 @@ defmodule Mix.Tasks.Dicom.Tagdict.Create do
   defp extract_text(el) do
     :xmerl_xpath.string(~c"//text()", el)
     |> Enum.map(fn {:xmlText, _parents, _pos, _lang, value, :text} -> value end)
-    |> Enum.map(fn value -> List.to_string(value) |> String.strip() end)
+    |> Enum.map(fn value -> List.to_string(value) |> String.trim() end)
     |> Enum.into("")
   end
 
@@ -84,6 +84,7 @@ defmodule Mix.Tasks.Dicom.Tagdict.Create do
       {group,
        elements
        |> Enum.map(&{Map.fetch!(&1, :element), &1})
+       |> Enum.uniq_by(&elem(&1, 0))
        |> Enum.sort_by(&elem(&1, 0))}
     end)
     |> Enum.sort_by(&elem(&1, 0))
@@ -91,8 +92,6 @@ defmodule Mix.Tasks.Dicom.Tagdict.Create do
 
   embed_template(:tagdict, """
   defmodule <%= @module_name %> do
-    @version "<%= @dict_version %>"
-
     @by_tag %{
       <%= for {group_no, elements} <- @tagdict do %>
       0x<%= group_no %> => %{
@@ -120,7 +119,6 @@ defmodule Mix.Tasks.Dicom.Tagdict.Create do
     rendered =
       tagdict_template(
         module_name: "Dicom.TagDict.Dict",
-        dict_version: @version,
         tagdict: tagdict
       )
 

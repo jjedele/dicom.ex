@@ -318,7 +318,6 @@ defmodule DicomNet.Association do
 
             {:ok, cfind_handler} ->
               Logger.debug("CFind handler is defined, returning responses to the caller.")
-              msg = {:dicom, %{operation: :cfind, dataset: ds}}
 
               response_ds =
                 handle_cfind(
@@ -337,7 +336,6 @@ defmodule DicomNet.Association do
 
         _ ->
           Logger.warning("command field not determied")
-          msg = {:dicom, %{operation: :cstore, dataset: ds}}
       end
 
     new_state = %{state | state: :association_established, buffer: <<>>, received_data: <<>>}
@@ -415,7 +413,14 @@ defmodule DicomNet.Association do
     )
   end
 
-  defp handle_cfind(socket, command, data_set, presentation_context_id, ts_options, cfind_handler) do
+  defp handle_cfind(
+         socket,
+         command,
+         data_set,
+         presentation_context_id,
+         _ts_options,
+         cfind_handler
+       ) do
     asci_de = DataSet.fetch!(command, :AffectedSOPClassUID)
     mid_de = DataSet.fetch!(command, :MessageID)
 
@@ -431,12 +436,6 @@ defmodule DicomNet.Association do
       :gen_tcp.send(socket, data)
     end)
 
-    response_tail = cfind_response_tail(asci_de, mid_de, @cfind_success)
-  end
-
-  defp build_cfind_identifier() do
-    identifier = Dicom.DataSet.from_keyword_list(AccessionNumber: "hello")
-
-    identifier
+    cfind_response_tail(asci_de, mid_de, @cfind_success)
   end
 end
